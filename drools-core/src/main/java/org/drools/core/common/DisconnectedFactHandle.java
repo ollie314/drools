@@ -39,7 +39,7 @@ import java.io.ObjectInput;
 import java.io.ObjectOutput;
 
 @XmlRootElement(name="disconnected-fact-handle")
-@XmlAccessorType(XmlAccessType.FIELD)
+@XmlAccessorType(XmlAccessType.NONE)
 @XmlSeeAlso({ArrayElements.class})
 public class DisconnectedFactHandle
         implements
@@ -164,6 +164,11 @@ public class DisconnectedFactHandle
         throw new UnsupportedOperationException( "DisonnectedFactHandle does not support this method" );
     }
 
+    @Override
+    public boolean isExpired() {
+        return false;
+    }
+
     public int getId() {
         return this.id;
     }
@@ -263,7 +268,7 @@ public class DisconnectedFactHandle
     }
 
     public InternalFactHandle clone() {
-        return clone();
+        throw new UnsupportedOperationException( "DisonnectedFactHandle does not support this method" );
     }
 
     public String toExternalForm() {

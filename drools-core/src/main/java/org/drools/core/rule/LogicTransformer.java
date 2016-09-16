@@ -186,7 +186,6 @@ public class LogicTransformer {
             }
             Accumulate accumulate = (Accumulate)element;
             replaceDeclarations( resolver, accumulate );
-            accumulate.resetInnerDeclarationCache();
 
         } else if ( element instanceof From ) {
             DataProvider provider = ((From) element).getDataProvider();
@@ -209,7 +208,7 @@ public class LogicTransformer {
         } else if ( element instanceof QueryElement ) {
             QueryElement qe = ( QueryElement ) element;
             Pattern pattern = qe.getResultPattern();
-            
+
             for ( Entry<String, Declaration> entry : pattern.getInnerDeclarations().entrySet() ) {
                 Declaration resolved = resolver.getDeclaration( null,
                                                                 entry.getValue().getIdentifier() );
@@ -219,26 +218,29 @@ public class LogicTransformer {
             }
 
             List<Integer> varIndexes = asList( qe.getVariableIndexes() );
-            for ( int i = 0; i < qe.getDeclIndexes().length; i++ ) {
-                Declaration declr = (Declaration) qe.getArgTemplate()[qe.getDeclIndexes()[i]];
+            for (int i = 0; i < qe.getArguments().length; i++) {
+                if (!(qe.getArguments()[i] instanceof QueryArgument.Declr)) {
+                    continue;
+                }
+                Declaration declr = ((QueryArgument.Declr) qe.getArguments()[i]).getDeclaration();
                 Declaration resolved = resolver.getDeclaration( null,
                                                                 declr.getIdentifier() );
-                if ( resolved != null && resolved != declr && resolved.getPattern() != pattern ) {
-                    qe.getArgTemplate()[qe.getDeclIndexes()[i]] = resolved;
+                if ( resolved != declr && resolved.getPattern() != pattern ) {
+                    qe.getArguments()[i] = new QueryArgument.Declr(resolved);
                 }
-                
+
                 if( ClassObjectType.DroolsQuery_ObjectType.isAssignableFrom( resolved.getPattern().getObjectType() ) ) {
                     // if the resolved still points to DroolsQuery, we know this is the first unification pattern, so redeclare it as the visible Declaration
                     declr = pattern.addDeclaration( declr.getIdentifier() );
 
                     // this bit is different, notice its the ArrayElementReader that we wire up to, not the declaration.
                     ArrayElementReader reader = new ArrayElementReader( new SelfReferenceClassFieldReader(Object[].class),
-                                                                        qe.getDeclIndexes()[i],
+                                                                        i,
                                                                         resolved.getDeclarationClass() );
                     declr.setReadAccessor( reader );
-                    
-                    varIndexes.add( qe.getDeclIndexes()[i] );
-                }                  
+
+                    varIndexes.add( i );
+                }
             }
             qe.setVariableIndexes( toIntArray( varIndexes ) );
 
@@ -317,7 +319,7 @@ public class LogicTransformer {
         return list;
     }
 
-    private static int[] toIntArray(List<Integer> list) {
+    public static int[] toIntArray(List<Integer> list) {
         int[] ints = new int[list.size()];
         for ( int i = 0; i < list.size(); i++ ) {
             ints[i] = list.get( i );

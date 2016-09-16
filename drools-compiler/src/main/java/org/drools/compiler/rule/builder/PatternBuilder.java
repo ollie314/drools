@@ -16,6 +16,7 @@
 
 package org.drools.compiler.rule.builder;
 
+import org.drools.compiler.builder.impl.KnowledgeBuilderImpl;
 import org.drools.compiler.compiler.AnalysisResult;
 import org.drools.compiler.compiler.BoundIdentifiers;
 import org.drools.compiler.compiler.DescrBuildError;
@@ -69,7 +70,6 @@ import org.drools.core.reteoo.RuleTerminalNode.SortDeclarations;
 import org.drools.core.reteoo.RuleTerminalNodeLeftTuple;
 import org.drools.core.rule.Behavior;
 import org.drools.core.rule.Declaration;
-import org.drools.core.rule.From;
 import org.drools.core.rule.MVELDialectRuntimeData;
 import org.drools.core.rule.Pattern;
 import org.drools.core.rule.PatternSource;
@@ -97,6 +97,7 @@ import org.drools.core.util.MVELSafeHelper;
 import org.drools.core.util.StringUtils;
 import org.drools.core.util.index.IndexUtil;
 import org.kie.api.definition.rule.Watch;
+import org.kie.api.definition.type.Role;
 import org.kie.internal.builder.KnowledgeBuilderResult;
 import org.kie.internal.builder.ResultSeverity;
 import org.mvel2.MVEL;
@@ -173,7 +174,7 @@ public class PatternBuilder
 
         ObjectType objectType = getObjectType(context, patternDescr);
         if ( objectType == null ) { // if the objectType doesn't exist it has to be query
-            return buildQuery( context, patternDescr, prefixPattern, patternDescr );
+            return buildQuery( context, patternDescr, patternDescr );
         }
 
         Pattern pattern = buildPattern( context, patternDescr, objectType );
@@ -289,7 +290,7 @@ public class PatternBuilder
             return new FactTemplateObjectType( factTemplate );
         } else {
             try {
-                final Class< ? > userProvidedClass = context.getDialect().getTypeResolver().resolveType( objectType );
+                final Class<?> userProvidedClass = context.getDialect().getTypeResolver().resolveType( objectType );
                 if ( !Modifier.isPublic(userProvidedClass.getModifiers()) ) {
                     context.addError(new DescrBuildError(context.getParentDescr(),
                                                          patternDescr,
@@ -297,9 +298,7 @@ public class PatternBuilder
                                                          "The class '" + objectType + "' is not public"));
                     return null;
                 }
-                PackageRegistry pkgr = context.getKnowledgeBuilder().getPackageRegistry( ClassUtils.getPackage( userProvidedClass ) );
-                InternalKnowledgePackage pkg = pkgr == null ? context.getPkg() : pkgr.getPackage();
-                return new ClassObjectType( userProvidedClass, pkg.isEvent( userProvidedClass ) );
+                return new ClassObjectType( userProvidedClass, isEvent(context, userProvidedClass) );
             } catch ( final ClassNotFoundException e ) {
                 // swallow as we'll do another check in a moment and then record the problem
             }
@@ -307,16 +306,32 @@ public class PatternBuilder
         return null;
     }
 
+    private boolean isEvent(RuleBuildContext context, Class<?> userProvidedClass) {
+        String packageName = ClassUtils.getPackage( userProvidedClass );
+        KnowledgeBuilderImpl kbuilder = context.getKnowledgeBuilder();
+        PackageRegistry pkgr = kbuilder.getPackageRegistry( packageName );
+        TypeDeclaration typeDeclaration = pkgr != null ? pkgr.getPackage().getTypeDeclaration( userProvidedClass ) : null;
+        if (typeDeclaration == null && kbuilder.getKnowledgeBase() != null) {
+            // check if the type declaration is contained only in the already existing kbase (possible during incremental compilation)
+            InternalKnowledgePackage pkg = kbuilder.getKnowledgeBase().getPackage( packageName );
+            typeDeclaration = pkg != null ? pkg.getTypeDeclaration( userProvidedClass ) : null;
+        }
+        if (typeDeclaration == null) {
+            typeDeclaration = context.getPkg().getTypeDeclaration( userProvidedClass );
+        }
+
+        if (typeDeclaration != null) {
+            return typeDeclaration.getRole() == Role.Type.EVENT;
+        }
+        Role role = userProvidedClass.getAnnotation( Role.class );
+        return role != null && role.value() == Role.Type.EVENT;
+    }
+
     private void processSource( RuleBuildContext context, PatternDescr patternDescr, Pattern pattern ) {
         if ( patternDescr.getSource() != null ) {
             // we have a pattern source, so build it
             RuleConditionBuilder builder = (RuleConditionBuilder) context.getDialect().getBuilder( patternDescr.getSource().getClass() );
-
-            PatternSource source = (PatternSource) builder.build( context, patternDescr.getSource() );
-            if ( source instanceof From ) {
-                ((From) source).setResultPattern( pattern );
-            }
-            pattern.setSource( source );
+            pattern.setSource( (PatternSource) builder.build( context, patternDescr.getSource(), pattern ) );
         }
     }
 
@@ -342,12 +357,12 @@ public class PatternBuilder
         }
     }
 
-    private RuleConditionElement buildQuery( RuleBuildContext context, PatternDescr descr, Pattern prefixPattern, PatternDescr patternDescr ) {
+    private RuleConditionElement buildQuery( RuleBuildContext context, PatternDescr descr, PatternDescr patternDescr ) {
         RuleConditionElement rce = null;
         // it might be a recursive query, so check for same names
         if ( context.getRule().getName().equals( patternDescr.getObjectType() ) ) {
             // it's a query so delegate to the QueryElementBuilder
-            rce = buildQueryElement(context, descr, prefixPattern, (QueryImpl) context.getRule());
+            rce = buildQueryElement(context, descr, (QueryImpl) context.getRule());
         }
 
         if ( rce == null ) {
@@ -355,7 +370,7 @@ public class PatternBuilder
             RuleImpl rule = context.getPkg().getRule( patternDescr.getObjectType() );
             if ( rule instanceof QueryImpl ) {
                 // it's a query so delegate to the QueryElementBuilder
-                rce = buildQueryElement(context, descr, prefixPattern, (QueryImpl) rule);
+                rce = buildQueryElement(context, descr, (QueryImpl) rule);
             }
         }
 
@@ -372,7 +387,7 @@ public class PatternBuilder
                         RuleImpl rule = pkgReg.getPackage().getRule( patternDescr.getObjectType() );
                         if ( rule instanceof QueryImpl) {
                             // it's a query so delegate to the QueryElementBuilder
-                            rce = buildQueryElement(context, descr, prefixPattern, (QueryImpl) rule);
+                            rce = buildQueryElement(context, descr, (QueryImpl) rule);
                             break;
                         }
                     }
@@ -390,11 +405,11 @@ public class PatternBuilder
         return rce;
     }
 
-    private RuleConditionElement buildQueryElement(RuleBuildContext context, BaseDescr descr, Pattern prefixPattern, QueryImpl rule) {
+    private RuleConditionElement buildQueryElement(RuleBuildContext context, BaseDescr descr, QueryImpl rule) {
         if (context.getRule() != rule) {
             context.getRule().addUsedQuery(rule);
         }
-        return QueryElementBuilder.getInstance().build( context, descr, prefixPattern, rule );
+        return QueryElementBuilder.getInstance().build( context, descr, rule );
     }
 
     protected void processDuplicateBindings( boolean isUnification,
@@ -626,9 +641,7 @@ public class PatternBuilder
                     declarations.add(declaration);
                 }
             }
-            for ( EvaluatorWrapper operator : constraint.getOperators() ) {
-                operators.add( operator );
-            }
+            Collections.addAll( operators, constraint.getOperators() );
         }
 
         String expression = expressionBuilder.toString();
@@ -1589,11 +1602,6 @@ public class PatternBuilder
                     declaration = createDeclarationObject( context, "this", pattern );
                 } else {
                     declaration = new Declaration("this", pattern);
-                    try {
-                        if ( context.getPkg().getTypeResolver().resolveType( expr ) != null ) {
-                            return null;
-                        }
-                    } catch ( ClassNotFoundException e ) {}
                     context.getPkg().getClassFieldAccessorStore().getReader( ((ClassObjectType) pattern.getObjectType()).getClassName(), expr, declaration );
                 }
             }

@@ -16,6 +16,7 @@
 package org.drools.reteoo.common;
 
 import org.drools.core.WorkingMemoryEntryPoint;
+import org.drools.core.common.InternalFactHandle;
 import org.drools.core.common.InternalWorkingMemory;
 import org.drools.core.common.InternalWorkingMemoryEntryPoint;
 import org.drools.core.common.ObjectStore;
@@ -88,6 +89,11 @@ public class ReteWorkingMemoryEntryPoint implements WorkingMemoryEntryPoint, Int
     @Override
     public void update(FactHandle handle, Object object) {
         delegate.update(handle, object);
+    }
+
+    @Override
+    public void update(FactHandle handle, Object object, String... modifiedProperties) {
+        delegate.update(handle, object, modifiedProperties);
     }
 
     @Override
@@ -189,5 +195,10 @@ public class ReteWorkingMemoryEntryPoint implements WorkingMemoryEntryPoint, Int
     @Override
     public EntryPointNode getEntryPointNode() {
         return ((InternalWorkingMemoryEntryPoint)delegate).getEntryPointNode();
+    }
+
+    @Override
+    public void removeFromObjectStore(InternalFactHandle handle ) {
+        ((InternalWorkingMemoryEntryPoint)delegate).removeFromObjectStore(handle);
     }
 }

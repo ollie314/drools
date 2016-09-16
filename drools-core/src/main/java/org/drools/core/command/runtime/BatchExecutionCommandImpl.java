@@ -40,6 +40,7 @@ import org.kie.api.runtime.ExecutionResults;
 import com.thoughtworks.xstream.annotations.XStreamAsAttribute;
 
 
+
 /**
  * <p>Java class for BatchExecutionCommand complex type.
  *
@@ -72,13 +73,15 @@ public class BatchExecutionCommandImpl implements BatchExecutionCommand, Generic
                          @XmlElement(name = "modify", type = ModifyCommand.class),
                          @XmlElement(name = "get-object", type = GetObjectCommand.class),
                          @XmlElement(name = "fire-all-rules", type = FireAllRulesCommand.class),
+                         @XmlElement(name = "fire-until-halt", type = FireUntilHaltCommand.class),
                          @XmlElement(name = "complete-work-item", type = CompleteWorkItemCommand.class),
                          @XmlElement(name = "get-objects", type = GetObjectsCommand.class),
                          @XmlElement(name = "set-focus", type = AgendaGroupSetFocusCommand.class),
                          @XmlElement(name = "clear-activation-group", type = ClearActivationGroupCommand.class),
                          @XmlElement(name = "clear-agenda", type = ClearAgendaCommand.class),
                          @XmlElement(name = "clear-agenda-group", type = ClearAgendaGroupCommand.class),
-                         @XmlElement(name = "clear-ruleflow-group", type = ClearRuleFlowGroupCommand.class)
+                         @XmlElement(name = "clear-ruleflow-group", type = ClearRuleFlowGroupCommand.class),
+                         @XmlElement(name = "get-fact-handles", type = GetFactHandlesCommand.class)
                  })
     protected List<GenericCommand<?>> commands;
 

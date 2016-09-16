@@ -614,10 +614,10 @@ public class AddRemoveRule {
 
     public static boolean flushLeftTupleIfNecessary(InternalWorkingMemory wm, SegmentMemory sm, LeftTuple leftTuple, boolean streamMode) {
         PathMemory pmem = streamMode ?
-                          sm.getPathMemories().get(0) :
-                          sm.getFirstDataDrivenPathMemory();
+                          getPathMemoryToFlushInStreamMode( sm, leftTuple ) :
+                          getPathMemoryToFlushForEagerEvaluation( sm, leftTuple );
 
-        if (pmem == null) {
+        if ( pmem == null ) {
             return false;
         }
 
@@ -625,11 +625,51 @@ public class AddRemoveRule {
         if (leftTuple != null) {
             leftTupleSets.addInsert(leftTuple);
         }
-        forceFlushLeftTuple(pmem, sm, wm, leftTupleSets);
+
+        forceFlushLeftTuple( pmem, sm, wm, leftTupleSets );
+
+        if (pmem.isDataDriven() && pmem.getNodeType() == NodeTypeEnums.RightInputAdaterNode) {
+            for (PathEndNode pnode : pmem.getPathEndNode().getPathEndNodes()) {
+                if ( pnode instanceof TerminalNode ) {
+                    PathMemory outPmem = wm.getNodeMemory( (TerminalNode) pnode );
+                    if (outPmem.isDataDriven()) {
+                        SegmentMemory outSmem = outPmem.getSegmentMemories()[0];
+                        if (outSmem != null) {
+                            forceFlushLeftTuple( outPmem, outSmem, wm, new TupleSetsImpl<LeftTuple>() );
+                        }
+                    }
+                }
+            }
+        }
+
         return true;
     }
 
-    private static void forceFlushLeftTuple(PathMemory pmem, SegmentMemory sm, InternalWorkingMemory wm, TupleSets<LeftTuple> leftTupleSets) {
+    private static PathMemory getPathMemoryToFlushForEagerEvaluation( SegmentMemory sm, LeftTuple leftTuple ) {
+        PathMemory pmem = sm.getFirstDataDrivenPathMemory();
+        if ( leftTuple == null && pmem != null && !pmem.isRuleLinked() ) {
+            // skip the first, we already know it isn't linked
+            pmem = getFirstLinkedPathMemory( sm, sm.getDataDrivenPathMemories(), 1 );
+        }
+        return pmem;
+    }
+
+    private static PathMemory getPathMemoryToFlushInStreamMode( SegmentMemory sm, LeftTuple leftTuple ) {
+        return leftTuple != null && leftTuple.getPropagationContext().isMarshalling() ?
+               sm.getPathMemories().get(0) : // marshalling requires flushing even if the pmem is unlinked
+               getFirstLinkedPathMemory( sm, sm.getPathMemories(), 0 );
+    }
+
+    private static PathMemory getFirstLinkedPathMemory( SegmentMemory sm, List<PathMemory> pmems, int start ) {
+        for (int i = start; i < pmems.size(); i++) {
+            if (pmems.get(i).isRuleLinked()) {
+                return pmems.get(i);
+            }
+        }
+        return null;
+    }
+
+    public static void forceFlushLeftTuple(PathMemory pmem, SegmentMemory sm, InternalWorkingMemory wm, TupleSets<LeftTuple> leftTupleSets) {
         SegmentMemory[] smems = pmem.getSegmentMemories();
 
         LeftTupleNode node;
@@ -645,12 +685,9 @@ public class AddRemoveRule {
             mem = sm.getNodeMemories().get(0);
         }
 
-        PathMemory rtnPmem;
-        if ( NodeTypeEnums.isTerminalNode(pmem.getPathEndNode()) ) {
-            rtnPmem = pmem;
-        } else {
-            rtnPmem = wm.getNodeMemory((AbstractTerminalNode) pmem.getPathEndNode().getPathEndNodes()[0]);
-        }
+        PathMemory rtnPmem = NodeTypeEnums.isTerminalNode(pmem.getPathEndNode()) ?
+                             pmem :
+                             wm.getNodeMemory((AbstractTerminalNode) pmem.getPathEndNode().getPathEndNodes()[0]);
 
         new RuleNetworkEvaluator().outerEval(pmem, node, bit, mem, smems, sm.getPos(), leftTupleSets, wm,
                                              new LinkedList<StackEntry>(),

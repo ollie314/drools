@@ -249,6 +249,10 @@ public interface InternalAgenda
      */
     void fireUntilHalt(AgendaFilter agendaFilter);
 
+    boolean dispose();
+
+    boolean isAlive();
+
     AgendaGroup getAgendaGroup(String name);
 
     AgendaGroup getAgendaGroup(final String name,
@@ -326,4 +330,6 @@ public interface InternalAgenda
     boolean createPostponedActivation(LeftTuple postponedTuple, PropagationContext propagationContext, InternalWorkingMemory workingMemory, TerminalNode terminalNode);
 
     boolean isRuleActiveInRuleFlowGroup(String ruleflowGroupName, String ruleName, long processInstanceId);
+
+    void registerExpiration(PropagationContext expirationContext);
 }

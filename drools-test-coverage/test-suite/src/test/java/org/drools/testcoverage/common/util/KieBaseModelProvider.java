@@ -16,6 +16,7 @@
 
 package org.drools.testcoverage.common.util;
 
+import org.kie.api.KieBaseConfiguration;
 import org.kie.api.builder.model.KieBaseModel;
 import org.kie.api.builder.model.KieModuleModel;
 
@@ -24,4 +25,5 @@ import org.kie.api.builder.model.KieModuleModel;
  */
 public interface KieBaseModelProvider {
     KieBaseModel getKieBaseModel(KieModuleModel kieModuleModel);
+    KieBaseConfiguration getKieBaseConfiguration();
 }

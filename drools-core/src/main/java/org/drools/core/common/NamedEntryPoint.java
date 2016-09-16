@@ -48,7 +48,10 @@ import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
+import static java.util.Arrays.asList;
 import static org.drools.core.reteoo.PropertySpecificUtil.allSetButTraitBitMask;
+import static org.drools.core.reteoo.PropertySpecificUtil.calculatePositiveMask;
+import static org.drools.core.reteoo.PropertySpecificUtil.getSettableProperties;
 
 public class NamedEntryPoint
     implements
@@ -294,12 +297,22 @@ public class NamedEntryPoint
 
     public void update(final FactHandle factHandle,
                        final Object object) {
-        InternalFactHandle handle = (InternalFactHandle) factHandle;
-        update( handle,
+        update( (InternalFactHandle) factHandle,
                 object,
                 allSetButTraitBitMask(),
                 Object.class,
                 null );
+    }
+
+    public void update(FactHandle handle,
+                       Object object,
+                       String... modifiedProperties) {
+        Class modifiedClass = object.getClass();
+        update( (InternalFactHandle) handle,
+                object,
+                calculatePositiveMask(asList(modifiedProperties), getSettableProperties(kBase, modifiedClass)),
+                modifiedClass,
+                null);
     }
 
     public void update(final FactHandle factHandle,
@@ -307,8 +320,7 @@ public class NamedEntryPoint
                        final BitMask mask,
                        final Class<?> modifiedClass,
                        final Activation activation) {
-        InternalFactHandle handle = (InternalFactHandle) factHandle;
-        update( handle,
+        update( (InternalFactHandle) factHandle,
                 object,
                 mask,
                 modifiedClass,
@@ -341,7 +353,7 @@ public class NamedEntryPoint
                                                                                 object );
 
 
-            if ( handle.getId() == -1 || object == null || (handle.isEvent() && ((EventFactHandle) handle).isExpired()) ) {
+            if ( handle.getId() == -1 || object == null || handle.isExpired() ) {
                 // the handle is invalid, most likely already retracted, so return and we cannot assert a null object
                 return handle;
             }
@@ -512,6 +524,12 @@ public class NamedEntryPoint
 
         PropagationContext propagationContext = delete( handle, object, typeConf, rule, activation );
 
+        deleteFromTMS( handle, key, typeConf, propagationContext );
+
+        this.handleFactory.destroyFactHandle( handle );
+    }
+
+    private void deleteFromTMS( InternalFactHandle handle, EqualityKey key, ObjectTypeConf typeConf, PropagationContext propagationContext ) {
         if ( typeConf.isTMSEnabled() && key != null ) { // key can be null if we're expiring an event that has been already deleted
             TruthMaintenanceSystem tms = getTruthMaintenanceSystem();
 
@@ -522,17 +540,13 @@ public class NamedEntryPoint
             // If the equality key is now empty, then remove it, as it's no longer state either
             if ( key.isEmpty() && key.getLogicalFactHandle() == null ) {
                 tms.remove( key );
-            } else if ( key.getLogicalFactHandle() != null) {
+            } else if ( key.getLogicalFactHandle() != null ) {
                 // The justified set can be unstaged, now that the last stated has been deleted
                 final InternalFactHandle justifiedHandle = key.getLogicalFactHandle();
-
-
                 BeliefSet bs = justifiedHandle.getEqualityKey().getBeliefSet();
                 bs.getBeliefSystem().unstage( propagationContext, bs );
             }
         }
-
-        this.handleFactory.destroyFactHandle( handle );
     }
 
     private void deleteLogical(EqualityKey key) {
@@ -576,6 +590,12 @@ public class NamedEntryPoint
         }
 
         return propagationContext;
+    }
+
+    public void removeFromObjectStore(InternalFactHandle handle) {
+        this.objectStore.removeHandle( handle );
+        ObjectTypeConf typeConf = this.typeConfReg.getObjectTypeConf( this.entryPoint, handle.getObject() );
+        deleteFromTMS( handle, handle.getEqualityKey(), typeConf, null );
     }
 
     protected void addPropertyChangeListener(final InternalFactHandle handle, final boolean dynamicFlag ) {
@@ -774,5 +794,10 @@ public class NamedEntryPoint
 
     public TraitHelper getTraitHelper() {
         return traitHelper;
+    }
+
+    @Override
+    public String toString() {
+        return entryPoint.toString();
     }
 }

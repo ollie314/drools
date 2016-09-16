@@ -3627,8 +3627,8 @@ public class Misc2Test extends CommonTestMethodBase {
         ksession.fireAllRules();
 
         assertEquals( 2, map.size() );
-        assertEquals( 160.0, map.get( 4 ) );
-        assertEquals( 120.0, map.get( 3 ) );
+        assertEquals( 160, map.get( 4 ) );
+        assertEquals( 120, map.get( 3 ) );
 
     }
 
@@ -4712,9 +4712,9 @@ public class Misc2Test extends CommonTestMethodBase {
         ksession.fireAllRules();
 
         assertEquals( 4, list.size() );
-        assertEquals( 160.0, list.get( 0 ) );
+        assertEquals( 160, list.get( 0 ) );
         assertEquals( 4, list.get( 1 ) );
-        assertEquals( 120.0, list.get( 2 ) );
+        assertEquals( 120, list.get( 2 ) );
         assertEquals( 3, list.get( 3 ) );
     }
 
@@ -5052,9 +5052,7 @@ public class Misc2Test extends CommonTestMethodBase {
         assertEquals( 100, list.size() );
     }
 
-
     @Test
-    @Ignore
     public void testQueryCorruption() {
 
         String drl = "package drl;\n" +
@@ -8644,5 +8642,194 @@ public class Misc2Test extends CommonTestMethodBase {
         ksession2.insert( true );
         ksession2.insert( "test" );
         assertEquals(1, ksession2.fireAllRules());
+    }
+
+    @Test
+    public void testWiringClassOnPackageMerge() throws Exception {
+        String drl_init =
+                "package init;\n" +
+                "import org.kie.test.TestObject\n" +
+                "rule RInit when\n" +
+                "then\n" +
+                "    TestObject obj1 = new TestObject();\n" +
+                "    TestObject obj2 = new TestObject();" +
+                "    obj1.add(obj2);" +
+                "    insert(obj1);\n" +
+                "end";
+
+        String drl1 =
+                "package p1;\n" +
+                "import org.kie.test.TestObject\n" +
+                "global java.util.List list;\n" +
+                "rule R1 when\n" +
+                "    $obj : TestObject( $objs : objects )\n" +
+                "    $s : Object() from $objs\n" +
+                "then\n" +
+                "    list.add(\"R1\");\n" +
+                "end";
+
+        String drl2 =
+                "package p2;\n" +
+                "import org.kie.test.TestObject\n" +
+                "global java.util.List list;\n" +
+                "rule R2 when\n" +
+                "    $obj : TestObject( $objs : objects )\n" +
+                "    $s : TestObject() from $objs\n" +
+                "then\n" +
+                "    list.add(\"R2\");\n" +
+                "end";
+
+        String javaSrc =
+                "package org.kie.test;\n" +
+                "import java.util.*;\n" +
+                "\n" +
+                "public class TestObject {\n" +
+                "    private final List<TestObject> objects = new ArrayList<TestObject>();\n" +
+                "\n" +
+                "    public List<TestObject> getObjects() {\n" +
+                "        return objects;\n" +
+                "    }\n" +
+                "    public void add(TestObject obj) {\n" +
+                "        objects.add(obj);" +
+                "    }" +
+                "}\n";
+
+        String path = "org/kie/test/MyRuleUnit";
+
+        KieServices ks = KieServices.Factory.get();
+        KieFileSystem kfs = ks.newKieFileSystem();
+        kfs.writeKModuleXML(ks.newKieModuleModel().toXML())
+           .write("src/main/resources/a.drl", drl_init)
+           .write("src/main/resources/b.drl", drl1)
+           .write("src/main/resources/c.drl", drl2)
+           .write("src/main/java/org/kie/test/TestObject.java", javaSrc);
+
+        ks.newKieBuilder( kfs ).buildAll();
+        KieContainer kcontainer = ks.newKieContainer(ks.getRepository().getDefaultReleaseId());
+        KieSession kSession = kcontainer.newKieSession();
+
+        List<String> list = new ArrayList<String>();
+        kSession.setGlobal( "list", list );
+        kSession.fireAllRules();
+
+        assertEquals( 2, list.size() );
+        assertTrue( list.contains( "R1" ) );
+        assertTrue( list.contains( "R2" ) );
+    }
+
+    @Test
+    public void testChildLeftTuplesIterationOnLeftUpdate() {
+        // DROOLS-1186
+        String drl =
+                "import " + Shift.class.getCanonicalName() + "\n" +
+                "rule R when\n" +
+                "    Shift( $end1: end, $employee: employee )\n" +
+                "    Shift( employee == $employee, start > $end1 )\n" +
+                "    not Shift( employee == $employee, start > $end1 )\n" +
+                "then\n" +
+                "end";
+
+        KieSession kieSession = new KieHelper().addContent(drl, ResourceType.DRL).build().newKieSession();
+
+        String o = "o";
+        String x = "x";
+
+        Shift shift1 = new Shift(10, 11, o);
+        Shift shift2 = new Shift(20, 21, o);
+        Shift shift3 = new Shift(30, 31, x);
+        Shift shift4 = new Shift(40, 41, o);
+        Shift shift5 = new Shift(50, 51, o);
+        Shift shift6 = new Shift(60, 61, o);
+        Shift shift7 = new Shift(70, 71, o);
+        Shift shift8 = new Shift(80, 81, o);
+
+        FactHandle fh1 = kieSession.insert(shift1);
+        FactHandle fh2 = kieSession.insert(shift2);
+        FactHandle fh3 = kieSession.insert(shift3);
+        FactHandle fh4 = kieSession.insert(shift4);
+        FactHandle fh5 = kieSession.insert(shift5);
+        FactHandle fh6 = kieSession.insert(shift6);
+        FactHandle fh7 = kieSession.insert(shift7);
+        FactHandle fh8 = kieSession.insert(shift8);
+
+        assertEquals( 0, kieSession.fireAllRules() );
+
+        kieSession.update(fh1, shift1.setEmployee(x));
+        kieSession.update(fh4, shift4);
+        kieSession.update(fh8, shift8);
+        kieSession.update(fh5, shift5.setEmployee(x));
+        kieSession.update(fh7, shift7);
+        kieSession.update(fh2, shift2.setEmployee(x));
+        kieSession.update(fh6, shift6);
+        kieSession.update(fh3, shift3.setEmployee(o));
+
+        assertEquals( 0, kieSession.fireAllRules() );
+
+        kieSession.update(fh8, shift8.setEmployee(x));
+        kieSession.update(fh4, shift4.setEmployee(x));
+        kieSession.update(fh7, shift7.setEmployee(x));
+        kieSession.update(fh6, shift6.setEmployee(x));
+
+        assertEquals( 0, kieSession.fireAllRules() );
+    }
+
+    public static class Shift {
+
+        private final int start;
+        private final int end;
+        private String employee;
+
+        public Shift(int start, int end, String employee) {
+            this.start = start;
+            this.end = end;
+            this.employee = employee;
+        }
+
+        public int getStart() {
+            return start;
+        }
+
+        public int getEnd() {
+            return end;
+        }
+
+        public String getEmployee() {
+            return employee;
+        }
+
+        public Shift setEmployee(String employee) {
+            this.employee = employee;
+            return this;
+        }
+
+        @Override
+        public String toString() {
+            return "Shift " + employee + " from " + start + " to " + end;
+        }
+    }
+
+    @Test
+    public void testReportFailingConstraintOnError() {
+        // DROOLS-1071
+        String drl =
+                "import " + Person.class.getCanonicalName() + "\n" +
+                "rule R when\n" +
+                "    Person( name.startsWith(\"A\") )\n" +
+                "then\n" +
+                "end";
+
+        KieSession kieSession = new KieHelper().addContent(drl, ResourceType.DRL).build().newKieSession();
+        for (int i = 0; i < 100; i++) {
+            kieSession.insert( new Person( "A"+i ) );
+        }
+        kieSession.fireAllRules();
+
+        kieSession.insert( new Person( null ) );
+        try {
+            kieSession.fireAllRules();
+            fail("Evaluation with null must throw a NPE");
+        } catch (Exception e) {
+            assertTrue( e.getMessage().contains( "name.startsWith(\"A\")" ) );
+        }
     }
 }

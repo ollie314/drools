@@ -21,6 +21,7 @@ import org.drools.compiler.kie.util.ChangeSetBuilder;
 import org.drools.compiler.kie.util.KieJarChangeSet;
 import org.drools.compiler.kproject.models.KieBaseModelImpl;
 import org.drools.compiler.kproject.models.KieSessionModelImpl;
+import org.drools.compiler.management.KieContainerMonitor;
 import org.drools.core.RuleBaseConfiguration;
 import org.drools.core.common.InternalWorkingMemory;
 import org.drools.core.common.ProjectClassLoader;
@@ -28,6 +29,9 @@ import org.drools.core.definitions.impl.KnowledgePackageImpl;
 import org.drools.core.definitions.rule.impl.RuleImpl;
 import org.drools.core.impl.InternalKnowledgeBase;
 import org.drools.core.impl.StatefulKnowledgeSessionImpl;
+import org.drools.core.impl.StatelessKnowledgeSessionImpl;
+import org.drools.core.management.DroolsManagementAgent;
+import org.drools.core.management.DroolsManagementAgent.CBSKey;
 import org.kie.api.KieBase;
 import org.kie.api.KieBaseConfiguration;
 import org.kie.api.KieServices;
@@ -40,6 +44,7 @@ import org.kie.api.builder.model.FileLoggerModel;
 import org.kie.api.builder.model.KieBaseModel;
 import org.kie.api.builder.model.KieSessionModel;
 import org.kie.api.conf.EventProcessingOption;
+import org.kie.api.conf.MBeansOption;
 import org.kie.api.event.KieRuntimeEventManager;
 import org.kie.api.io.Resource;
 import org.kie.api.io.ResourceType;
@@ -60,6 +65,7 @@ import org.kie.internal.definition.KnowledgePackage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.management.ObjectName;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -70,6 +76,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.drools.compiler.kie.builder.impl.AbstractKieModule.buildKnowledgePackages;
@@ -93,24 +100,82 @@ public class KieContainerImpl
 
     private final KieRepository        kr;
 
+    private ReleaseId configuredReleaseId;
     private ReleaseId containerReleaseId;
+
+	private final String containerId;
 
     public KieModule getMainKieModule() {
         return kr.getKieModule(getReleaseId());
     }
-
+    
+    /**
+     * Please note: the recommended way of getting a KieContainer is relying on {@link org.kie.api.KieServices KieServices} API,
+     * for example: {@link org.kie.api.KieServices#newKieContainer(ReleaseId) KieServices.newKieContainer(...)}.
+     * The direct manual call to KieContainerImpl constructor instead would not guarantee the consistency of the supplied containerId.
+     */
     public KieContainerImpl(KieProject kProject, KieRepository kr) {
+        this("impl"+UUID.randomUUID(), kProject, kr);
+    }
+    
+    /**
+     * Please note: the recommended way of getting a KieContainer is relying on {@link org.kie.api.KieServices KieServices} API,
+     * for example: {@link org.kie.api.KieServices#newKieContainer(ReleaseId) KieServices.newKieContainer(...)}.
+     * The direct manual call to KieContainerImpl constructor instead would not guarantee the consistency of the supplied containerId.
+     */    
+    public KieContainerImpl(KieProject kProject, KieRepository kr, ReleaseId containerReleaseId) {
+        this("impl"+UUID.randomUUID(), kProject, kr, containerReleaseId);
+    }
+
+    /**
+     * Please note: the recommended way of getting a KieContainer is relying on {@link org.kie.api.KieServices KieServices} API,
+     * for example: {@link org.kie.api.KieServices#newKieContainer(ReleaseId) KieServices.newKieContainer(...)}.
+     * The direct manual call to KieContainerImpl constructor instead would not guarantee the consistency of the supplied containerId.
+     */
+    public KieContainerImpl(String containerId, KieProject kProject, KieRepository kr) {
         this.kr = kr;
         this.kProject = kProject;
+        this.containerId = containerId;
         kProject.init();
     }
-
-    public KieContainerImpl(KieProject kProject, KieRepository kr, ReleaseId containerReleaseId) {
-        this(kProject, kr);
+    
+    /**
+     * Please note: the recommended way of getting a KieContainer is relying on {@link org.kie.api.KieServices KieServices} API,
+     * for example: {@link org.kie.api.KieServices#newKieContainer(ReleaseId) KieServices.newKieContainer(...)}.
+     * The direct manual call to KieContainerImpl constructor instead would not guarantee the consistency of the supplied containerId.
+     */
+    public KieContainerImpl(String containerId, KieProject kProject, KieRepository kr, ReleaseId containerReleaseId) {
+        this(containerId, kProject, kr);
+        this.configuredReleaseId = containerReleaseId;
         this.containerReleaseId = containerReleaseId;
+        
+        initMBeans(containerId);
     }
 
-    public ReleaseId getReleaseId() {
+	private void initMBeans(String containerId) {
+		if ( isMBeanOptionEnabled() ) {
+	        KieContainerMonitor monitor = new KieContainerMonitor(this);
+	        ObjectName on = DroolsManagementAgent.createObjectNameBy(containerId);
+	        DroolsManagementAgent.getInstance().registerMBean( this, monitor, on );
+        }
+	}
+    
+    @Override
+    public String getContainerId() {
+    	return this.containerId;
+    }
+    
+    @Override
+    public ReleaseId getConfiguredReleaseId() {
+		return configuredReleaseId;
+	}
+    
+	@Override
+	public ReleaseId getResolvedReleaseId() {
+		return getReleaseId();
+	}
+
+	public ReleaseId getReleaseId() {
         return kProject.getGAV();
     }
 
@@ -122,6 +187,7 @@ public class KieContainerImpl
         return kProject.getCreationTimestamp();
     }
 
+    @Override
     public ReleaseId getContainerReleaseId() {
         return containerReleaseId != null ? containerReleaseId : getReleaseId();
     }
@@ -165,18 +231,21 @@ public class KieContainerImpl
         final KieJarChangeSet cs = csb.build( currentKM, newKM );
 
         final List<String> modifiedClasses = getModifiedClasses(cs);
+        final boolean modifyingUsedClass = isModifyingUsedClass( modifiedClasses, getClassLoader() );
+        reinitModifiedClasses( newKM, modifiedClasses, getClassLoader() );
         final List<String> unchangedResources = getUnchangedResources( newKM, cs );
 
-        ((KieModuleKieProject) kProject).updateToModule( newKM );
+        Map<String, KieBaseModel> currentKieBaseModels = ((KieModuleKieProject) kProject).updateToModule( newKM );
 
         final ResultsImpl results = new ResultsImpl();
 
         List<String> kbasesToRemove = new ArrayList<String>();
         for ( Entry<String, KieBase> kBaseEntry : kBases.entrySet() ) {
             String kbaseName = kBaseEntry.getKey();
-            final KieBaseModel kieBaseModel = kProject.getKieBaseModel( kbaseName );
+            final KieBaseModel newKieBaseModel = kProject.getKieBaseModel( kbaseName );
+            final KieBaseModel currentKieBaseModel = currentKieBaseModels.get( kbaseName );
             // if a kbase no longer exists, just remove it from the cache
-            if ( kieBaseModel == null ) {
+            if ( newKieBaseModel == null ) {
                 // have to save for later removal to avoid iteration errors
                 kbasesToRemove.add( kbaseName );
             } else {
@@ -184,7 +253,8 @@ public class KieContainerImpl
                 kBase.enqueueModification( new Runnable() {
                     @Override
                     public void run() {
-                        updateKBase( kBase, currentKM, newReleaseId, newKM, cs, modifiedClasses, unchangedResources, results, kieBaseModel );
+                        updateKBase( kBase, currentKM, newReleaseId, newKM, cs, modifiedClasses, modifyingUsedClass,
+                                     unchangedResources, results, newKieBaseModel, currentKieBaseModel);
                     }
                 } );
             }
@@ -214,19 +284,19 @@ public class KieContainerImpl
     }
 
     private void updateKBase( InternalKnowledgeBase kBase, InternalKieModule currentKM, ReleaseId newReleaseId,
-                              InternalKieModule newKM, KieJarChangeSet cs, List<String> modifiedClasses, List<String> unchangedResources,
-                              ResultsImpl results, KieBaseModel kieBaseModel ) {
-        KnowledgeBuilder kbuilder = KnowledgeBuilderFactory.newKnowledgeBuilder( kBase );
+                              InternalKieModule newKM, KieJarChangeSet cs, List<String> modifiedClasses, boolean modifyingUsedClass,
+                              List<String> unchangedResources, ResultsImpl results, KieBaseModel newKieBaseModel, KieBaseModel currentKieBaseModel ) {
+        KnowledgeBuilder kbuilder = KnowledgeBuilderFactory.newKnowledgeBuilder( kBase, newKM.getBuilderConfiguration( newKieBaseModel ) );
         KnowledgeBuilderImpl pkgbuilder = (KnowledgeBuilderImpl)kbuilder;
         CompositeKnowledgeBuilder ckbuilder = kbuilder.batch();
 
         boolean shouldRebuild = applyResourceChanges(currentKM, newKM, cs, modifiedClasses,
-                                                     kBase, kieBaseModel, pkgbuilder, ckbuilder);
+                                                     kBase, newKieBaseModel, pkgbuilder, ckbuilder, modifyingUsedClass);
         // remove resources first
         for ( ResourceChangeSet rcs : cs.getChanges().values() ) {
             if ( rcs.getChangeType() == ChangeType.REMOVED ) {
                 String resourceName = rcs.getResourceName();
-                if ( !resourceName.endsWith( ".properties" ) && isFileInKBase(newKM, kieBaseModel, resourceName) ) {
+                if ( !resourceName.endsWith( ".properties" ) && isFileInKBase(currentKM, currentKieBaseModel, resourceName) ) {
                     pkgbuilder.removeObjectsGeneratedFromResource( currentKM.getResource( resourceName ) );
                 }
             }
@@ -235,12 +305,14 @@ public class KieContainerImpl
         if ( shouldRebuild ) {
             // readd unchanged dsl files to the kbuilder
             for (String dslFile : unchangedResources) {
-                if (isFileInKBase(newKM, kieBaseModel, dslFile)) {
-                    newKM.addResourceToCompiler(ckbuilder, kieBaseModel, dslFile);
+                if (isFileInKBase(newKM, newKieBaseModel, dslFile)) {
+                    newKM.addResourceToCompiler(ckbuilder, newKieBaseModel, dslFile);
                 }
             }
-            rebuildAll(newReleaseId, results, newKM, modifiedClasses, kieBaseModel, pkgbuilder, ckbuilder);
+            rebuildAll(newReleaseId, results, newKM, modifyingUsedClass, newKieBaseModel, pkgbuilder, ckbuilder);
         }
+        
+        kBase.setResolvedReleaseId(newReleaseId);
 
         for ( InternalWorkingMemory wm : kBase.getWorkingMemories() ) {
             wm.notifyWaitOnRest();
@@ -268,15 +340,9 @@ public class KieContainerImpl
         return false;
     }
 
-    private boolean applyResourceChanges(InternalKieModule currentKM, InternalKieModule newKM, KieJarChangeSet cs, List<String> modifiedClasses, KieBase kBase, KieBaseModel kieBaseModel, KnowledgeBuilderImpl pkgbuilder, CompositeKnowledgeBuilder ckbuilder) {
-        boolean modifyingUsedClass = false;
-        for (String modifiedClass : modifiedClasses) {
-            if ( pkgbuilder.isClassInUse( convertResourceToClassName(modifiedClass) ) ) {
-                modifyingUsedClass = true;
-                break;
-            }
-        }
-
+    private boolean applyResourceChanges(InternalKieModule currentKM, InternalKieModule newKM, KieJarChangeSet cs,
+                                         List<String> modifiedClasses, KieBase kBase, KieBaseModel kieBaseModel,
+                                         KnowledgeBuilderImpl pkgbuilder, CompositeKnowledgeBuilder ckbuilder, boolean modifyingUsedClass) {
         boolean shouldRebuild = modifyingUsedClass;
         if (modifyingUsedClass) {
             // there are modified classes used by this kbase, so it has to be completely updated
@@ -287,6 +353,19 @@ public class KieContainerImpl
                                                          kieBaseModel, pkgbuilder, ckbuilder) > 0;
         }
         return shouldRebuild;
+    }
+
+    private boolean isModifyingUsedClass( List<String> modifiedClasses, ClassLoader classLoader ) {
+        for (String modifiedClass : modifiedClasses) {
+            if ( isClassInUse( classLoader, convertResourceToClassName(modifiedClass) ) ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isClassInUse(ClassLoader rootClassLoader, String className) {
+        return !(rootClassLoader instanceof ProjectClassLoader) || ((ProjectClassLoader) rootClassLoader).isClassInUse(className);
     }
 
     private boolean isFileInKBase(InternalKieModule kieModule, KieBaseModel kieBase, String fileName) {
@@ -364,26 +443,10 @@ public class KieContainerImpl
     private void rebuildAll(ReleaseId newReleaseId,
                             ResultsImpl results,
                             InternalKieModule newKM,
-                            List<String> modifiedClasses,
+                            boolean modifyingUsedClass,
                             KieBaseModel kieBaseModel,
                             KnowledgeBuilderImpl kbuilder,
                             CompositeKnowledgeBuilder ckbuilder) {
-        Set<String> modifiedPackages = new HashSet<String>();
-        if (!modifiedClasses.isEmpty()) {
-            ClassLoader rootClassLoader = kbuilder.getRootClassLoader();
-            if ( rootClassLoader instanceof ProjectClassLoader) {
-                ProjectClassLoader projectClassLoader = (ProjectClassLoader) rootClassLoader;
-                projectClassLoader.reinitTypes();
-                for (String resourceName : modifiedClasses) {
-                    String className = convertResourceToClassName( resourceName );
-                    byte[] bytes = newKM.getBytes(resourceName);
-                    Class<?> clazz = projectClassLoader.defineClass(className, resourceName, bytes);
-                    modifiedPackages.add(clazz.getPackage().getName());
-                }
-                kbuilder.setAllRuntimesDirty(modifiedPackages);
-            }
-        }
-
         ckbuilder.build();
 
         PackageBuilderErrors errors = kbuilder.getErrors();
@@ -394,8 +457,22 @@ public class KieContainerImpl
             log.error("Unable to update KieBase: " + kieBaseModel.getName() + " to release " + newReleaseId + "\n" + errors.toString());
         }
 
+        if (modifyingUsedClass) {
+            kbuilder.rewireAllClassObjectTypes();
+        }
+    }
+
+    private void reinitModifiedClasses( InternalKieModule newKM, List<String> modifiedClasses, ClassLoader classLoader ) {
         if (!modifiedClasses.isEmpty()) {
-            kbuilder.rewireClassObjectTypes(modifiedPackages);
+            if ( classLoader instanceof ProjectClassLoader ) {
+                ProjectClassLoader projectClassLoader = (ProjectClassLoader) classLoader;
+                projectClassLoader.reinitTypes();
+                for (String resourceName : modifiedClasses) {
+                    String className = convertResourceToClassName( resourceName );
+                    byte[] bytes = newKM.getBytes(resourceName);
+                    Class<?> clazz = projectClassLoader.defineClass(className, resourceName, bytes);
+                }
+            }
         }
     }
 
@@ -506,7 +583,10 @@ public class KieContainerImpl
         } else if (conf instanceof RuleBaseConfiguration) {
             ((RuleBaseConfiguration)conf).setClassLoader(cl);
         }
-        InternalKnowledgeBase kBase = (InternalKnowledgeBase) KnowledgeBaseFactory.newKnowledgeBase( conf );
+        InternalKnowledgeBase kBase = (InternalKnowledgeBase) KnowledgeBaseFactory.newKnowledgeBase( kBaseModel.getName(), conf );
+        kBase.setResolvedReleaseId(containerReleaseId);
+        kBase.setContainerId(containerId);
+        kBase.initMBeans();
 
         kBase.addKnowledgePackages( pkgs );
         return kBase;
@@ -613,6 +693,9 @@ public class KieContainerImpl
             wireListnersAndWIHs( kSessionModel, kSession );
         }
         registerLoggers(kSessionModel, kSession);
+
+        ((StatefulKnowledgeSessionImpl) kSession).initMBeans(containerId, ((InternalKnowledgeBase) kBase).getId(), kSessionName);
+        
         kSessions.put(kSessionName, kSession);
         return kSession;
     }
@@ -656,6 +739,9 @@ public class KieContainerImpl
             wireListnersAndWIHs( kSessionModel, statelessKieSession );
         }
         registerLoggers(kSessionModel, statelessKieSession);
+        
+        ((StatelessKnowledgeSessionImpl) statelessKieSession).initMBeans(containerId, ((InternalKnowledgeBase) kBase).getId(), kSessionName);
+        
         statelessKSessions.put(kSessionName, statelessKieSession);
         return statelessKieSession;
     }
@@ -687,11 +773,37 @@ public class KieContainerImpl
     }
 
     public void dispose() {
+        Set<DroolsManagementAgent.CBSKey> cbskeys = new HashSet<DroolsManagementAgent.CBSKey>();
+        if ( isMBeanOptionEnabled() ) {
+            for (Entry<String, KieSession> kv : kSessions.entrySet()) {
+                cbskeys.add(new DroolsManagementAgent.CBSKey(containerId, ((InternalKnowledgeBase) kv.getValue().getKieBase()).getId(), kv.getKey()));
+            }
+            for (Entry<String, StatelessKieSession> kv : statelessKSessions.entrySet()) {
+                cbskeys.add(new DroolsManagementAgent.CBSKey(containerId, ((InternalKnowledgeBase) kv.getValue().getKieBase()).getId(), kv.getKey()));
+            }
+        }
+        
         for (KieSession kieSession : kSessions.values()) {
             kieSession.dispose();
         }
         kSessions.clear();
         statelessKSessions.clear();
+        
+        if ( isMBeanOptionEnabled() ) {
+            for (CBSKey c : cbskeys) {
+                DroolsManagementAgent.getInstance().unregisterKnowledgeSessionBean(c);
+            }
+            for (KieBase kb : kBases.values()) {
+                DroolsManagementAgent.getInstance().unregisterKnowledgeBase((InternalKnowledgeBase) kb);
+            }
+            DroolsManagementAgent.getInstance().unregisterMBeansFromOwner(this);
+        }
+        
+        ((InternalKieServices) KieServices.Factory.get()).clearRefToContainerId(this.containerId, this);
+    }
+
+    private boolean isMBeanOptionEnabled() {
+        return MBeansOption.isEnabled( System.getProperty( MBeansOption.PROPERTY_NAME, MBeansOption.DISABLED.toString() ) );
     }
 
     public KieProject getKieProject() {

@@ -532,6 +532,10 @@ public final class ClassUtils {
         return false;
     }
 
+    public static boolean isIterable(Class<?> clazz) {
+        return Iterable.class.isAssignableFrom( clazz ) || clazz.isArray();
+    }
+
     private static class SetterInClass implements Comparable {
         private final String setter;
         private final Class<?> clazz;
@@ -790,5 +794,14 @@ public final class ClassUtils {
             className = classNameBuffer.toString();
         }
         return className;
+    }
+
+    public static Class<?> safeLoadClass(ClassLoader cl, String name) {
+        try {
+            return cl.loadClass( name );
+        }
+        catch ( final ClassNotFoundException cnfe ) { } // class doesn't exist
+        catch ( final NoClassDefFoundError ncdfe ) { } // potential mis-match induced by Mac/OSX
+        return null;
     }
 }

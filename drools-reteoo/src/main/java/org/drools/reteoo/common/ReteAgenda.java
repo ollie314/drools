@@ -78,7 +78,6 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -147,6 +146,8 @@ public class ReteAgenda<M extends ModedAssertion<M>>
 
     // @TODO make serialisation work
     private InternalActivationGroup stagedActivations;
+
+    private boolean alive = true;
 
     // ------------------------------------------------------------
     // Constructors
@@ -1509,5 +1510,19 @@ public class ReteAgenda<M extends ModedAssertion<M>>
 
     public ActivationsFilter getActivationsFilter() {
         return this.activationsFilter;
+    }
+
+    public void registerExpiration(PropagationContext ectx) { }
+
+    @Override
+    public boolean dispose() {
+        boolean wasAlive = alive;
+        alive = false;
+        return wasAlive;
+    }
+
+    @Override
+    public boolean isAlive() {
+        return alive;
     }
 }
