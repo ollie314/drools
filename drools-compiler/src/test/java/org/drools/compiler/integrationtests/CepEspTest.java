@@ -5686,7 +5686,7 @@ public class CepEspTest extends CommonTestMethodBase {
         clock.advanceTime( 2, TimeUnit.SECONDS );
         ksession.fireAllRules();
 
-        assertTrue( handle1.isEffectivelyExpired() );
+        assertTrue( handle1.isExpired() );
         assertFalse( ksession.getFactHandles().contains( handle1 ) );
     }
 
@@ -6444,5 +6444,48 @@ public class CepEspTest extends CommonTestMethodBase {
         ksession.fireAllRules();
 
         assertEquals(0, counter.get());
+    }
+
+    @Test(timeout=10000)
+    public void testSerializationDeserliaizationWithRectractedExpireFact() {
+        // DROOLS-1328
+        String drl =
+                "package " + TestEvent.class.getPackage().getName() + "\n" +
+                "declare " + TestEvent.class.getCanonicalName() + "\n" +
+                "   @role( event ) \n" +
+                "   @expires( 60d ) \n" +
+                "end\n" +
+                "rule \"retract test rule\"\n" +
+                "salience 10 \n" +
+                "when\n" +
+                "   $e : TestEvent() over window:length(1)\n" +
+                "then\n" +
+                "   delete($e);\n" +
+                "end";
+
+        KieSessionConfiguration sessionConfig = KnowledgeBaseFactory.newKnowledgeSessionConfiguration();
+        sessionConfig.setOption( ClockTypeOption.get( ClockType.PSEUDO_CLOCK.getId() ) );
+
+        KieHelper helper = new KieHelper();
+        helper.addContent( drl, ResourceType.DRL );
+        KieBase kbase = helper.build( EventProcessingOption.STREAM );
+        KieSession ksession = kbase.newKieSession( sessionConfig, null );
+
+
+        ksession.insert(new TestEvent("test1"));
+        ksession.fireAllRules();
+
+        KieSession kieSessionDeserialized = null;
+        try {
+            kieSessionDeserialized = SerializationHelper.getSerialisedStatefulKnowledgeSession( ksession, true, false );
+        } catch ( Exception e ) {
+            e.printStackTrace();
+            fail( e.getMessage() );
+        }
+
+        ksession.dispose();
+
+        kieSessionDeserialized.insert(new TestEvent("test2"));
+        kieSessionDeserialized.fireAllRules();
     }
 }

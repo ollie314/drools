@@ -29,7 +29,6 @@ public class EventFactHandle extends DefaultFactHandle implements Comparable<Eve
     private long              startTimestamp;
     private long              duration;
     private boolean           expired;
-    private boolean           expiredAtInsertion;
     private boolean           pendingRemoveFromStore;
     private long              activationsCount;
     private int               otnCount;
@@ -135,6 +134,24 @@ public class EventFactHandle extends DefaultFactHandle implements Comparable<Eve
     }
 
     @Override
+    public void invalidate() {
+        if ( linkedFactHandle != null ) {
+            linkedFactHandle.invalidate();
+        }  else {
+            super.invalidate();
+        }
+    }
+
+    @Override
+    public boolean isValid() {
+        if ( linkedFactHandle != null ) {
+            return linkedFactHandle.isValid();
+        }  else {
+            return super.isValid();
+        }
+    }
+
+    @Override
     public boolean isExpired() {
         if ( linkedFactHandle != null ) {
             return linkedFactHandle.isExpired();
@@ -148,27 +165,6 @@ public class EventFactHandle extends DefaultFactHandle implements Comparable<Eve
             linkedFactHandle.setExpired(expired);
         }  else {
             this.expired = expired;
-        }
-    }
-
-    public boolean isExpiredAtInsertion() {
-        if ( linkedFactHandle != null ) {
-            return linkedFactHandle.isExpiredAtInsertion();
-        }  else {
-            return expiredAtInsertion;
-        }
-    }
-
-    @Override
-    public boolean isEffectivelyExpired() {
-        return isExpired() || isExpiredAtInsertion();
-    }
-
-    public void setExpiredAtInsertion(boolean expiredAtInsertion) {
-        if ( linkedFactHandle != null ) {
-            linkedFactHandle.setExpiredAtInsertion(expiredAtInsertion);
-        }  else {
-            this.expiredAtInsertion = expiredAtInsertion;
         }
     }
 
@@ -248,7 +244,6 @@ public class EventFactHandle extends DefaultFactHandle implements Comparable<Eve
         clone.setActivationsCount( getActivationsCount() );
         clone.setOtnCount( getOtnCount() );
         clone.setExpired( isExpired() );
-        clone.setExpiredAtInsertion( isExpiredAtInsertion() );
         clone.setEntryPoint( getEntryPoint() );
         clone.setEqualityKey( getEqualityKey() );
         clone.setFirstLeftTuple(getLastLeftTuple());
@@ -270,7 +265,6 @@ public class EventFactHandle extends DefaultFactHandle implements Comparable<Eve
         clone.setActivationsCount( getActivationsCount() );
         clone.setOtnCount( getOtnCount() );
         clone.setExpired( isExpired() );
-        clone.setExpiredAtInsertion( isExpiredAtInsertion() );
         clone.setEntryPoint( getEntryPoint() );
         clone.setEqualityKey( getEqualityKey() );
         clone.setObjectHashCode(getObjectHashCode());
